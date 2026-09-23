@@ -283,3 +283,79 @@ def test_switch_preserves_unicode(prefs_file: Path):
     switch_account_on_disk(prefs_file, target)
     on_disk = read_prefs(prefs_file)
     assert on_disk["flutter.lastFlowZoneName"] == "广东2区(标配)"
+
+# ---------------------------------------------------------------------------
+# 文件名规则:手机号优先
+# ---------------------------------------------------------------------------
+
+def test_account_file_named_by_phone(tmp_path: Path):
+    """档案文件名用手机号,便于肉眼识别。"""
+    store = AccountStore(tmp_path / "accounts")
+    acc = Account.from_prefs(fake_prefs("300003", "13700000003"))
+    p = store.save(acc)
+    assert p.name == "13700000003.json"
+
+
+def test_account_file_falls_back_to_uid_without_phone(tmp_path: Path):
+    store = AccountStore(tmp_path / "accounts")
+    acc = Account.from_prefs(fake_prefs("300003", ""))
+    acc.phone = ""
+    p = store.save(acc)
+    assert p.name == "300003.json"
+
+
+def test_load_by_phone_and_uid_both_work(tmp_path: Path):
+    store = AccountStore(tmp_path / "accounts")
+    store.save(Account.from_prefs(fake_prefs("300003", "13700000003")))
+
+    by_phone = store.load("13700000003")
+    by_uid = store.load("300003")
+    assert by_phone.uid == by_uid.uid == "300003"
+    assert by_phone.phone == "13700000003"
+
+
+def test_load_unknown_key_raises(tmp_path: Path):
+    store = AccountStore(tmp_path / "accounts")
+    store.save(Account.from_prefs(fake_prefs("300003", "13700000003")))
+    with pytest.raises(FileNotFoundError):
+        store.load("19900000000")
+
+
+def test_save_migrates_legacy_uid_named_file(tmp_path: Path):
+    """旧版以 uid 命名的档案,重新保存后应改名为手机号,且不留重复文件。"""
+    store = AccountStore(tmp_path / "accounts")
+    legacy = store.root / "300003.json"
+    legacy.write_text(
+        json.dumps(Account.from_prefs(fake_prefs("300003", "13700000003")).to_dict()),
+        encoding="utf-8",
+    )
+
+    store.save(Account.from_prefs(fake_prefs("300003", "13700000003")))
+
+    names = sorted(p.name for p in store.root.glob("*.json"))
+    assert names == ["13700000003.json"], names
+    assert store.load("300003").phone == "13700000003"
+
+
+def test_save_does_not_touch_other_accounts(tmp_path: Path):
+    store = AccountStore(tmp_path / "accounts")
+    store.save(Account.from_prefs(fake_prefs("1", "13900000000")))
+    store.save(Account.from_prefs(fake_prefs("2", "13700000000")))
+    store.save(Account.from_prefs(fake_prefs("1", "13900000000")))  # 重存第一个
+
+    names = sorted(p.name for p in store.root.glob("*.json"))
+    assert names == ["13700000000.json", "13900000000.json"]
+
+
+def test_delete_by_phone(tmp_path: Path):
+    store = AccountStore(tmp_path / "accounts")
+    store.save(Account.from_prefs(fake_prefs("300003", "13700000003")))
+    assert store.delete("13700000003") is True
+    assert store.delete("13700000003") is False
+
+
+def test_delete_by_uid_removes_phone_named_file(tmp_path: Path):
+    store = AccountStore(tmp_path / "accounts")
+    store.save(Account.from_prefs(fake_prefs("300003", "13700000003")))
+    assert store.delete("300003") is True
+    assert not list(store.root.glob("*.json"))

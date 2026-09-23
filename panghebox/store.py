@@ -214,42 +214,99 @@ class Account:
 
 
 def _safe_filename(s: str) -> str:
-    """把 uid 变成安全的文件名。"""
+    """把手机号/uid 变成安全的文件名。"""
     keep = "".join(c for c in s if c.isalnum() or c in "-_")
     return keep or "unknown"
 
 
 class AccountStore:
-    """账号档案仓库,一个账号对应 accounts/ 下的一个 json 文件。"""
+    """账号档案仓库,一个账号对应 accounts/ 下的一个 json 文件。
+
+    文件名优先用**手机号**(如 ``13800000001.json``),手机号缺失时回退到
+    uid。手机号是用户日常识别账号的方式,看文件列表能直接对上人;
+    uid 是一串数字,肉眼不好认。
+
+    为保证兼容,读取时会依次尝试:手机号文件名 → uid 文件名。
+    早期版本用 uid 命名,这些档案仍能被找到,并在下次保存时自动改名为手机号。
+    """
 
     def __init__(self, root: Path | str) -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def path_for(self, uid: str) -> Path:
-        return self.root / f"{_safe_filename(str(uid))}.json"
+    def filename_for(self, acc: Account) -> str:
+        """返回该账号应使用的文件名(不含路径)。"""
+        key = acc.phone or acc.uid
+        return f"{_safe_filename(str(key))}.json"
+
+    def path_for(self, acc: Account) -> Path:
+        """返回该账号档案的规范路径。"""
+        return self.root / self.filename_for(acc)
+
+    def path_for_key(self, key: str) -> Path:
+        """按「手机号或 uid」构造候选路径(仅用于查旧档案)。"""
+        return self.root / f"{_safe_filename(str(key))}.json"
+
+    def find_file(self, key: str) -> Path | None:
+        """按手机号或 uid 找到已有档案文件,找不到返回 None。
+
+        先试直接按 key 命名的文件(兼容旧版 uid 命名),再遍历内容匹配
+        phone / uid 字段。
+        """
+        direct = self.path_for_key(key)
+        if direct.exists():
+            return direct
+
+        for p in sorted(self.root.glob("*.json")):
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            if str(data.get("uid")) == str(key) or str(data.get("phone")) == str(key):
+                return p
+        return None
 
     def save(self, acc: Account) -> Path:
-        """写入账号档案(原子)。"""
-        p = self.path_for(acc.uid)
-        _atomic_write_json(p, acc.to_dict())
-        return p
+        """写入账号档案(原子)。
 
-    def load(self, uid: str) -> Account:
-        """按 uid 读取档案。
+        若该账号此前以别的文件名存在(例如旧版的 ``<uid>.json``),
+        会顺带把旧文件删掉,避免同一账号出现两份档案。
+        """
+        target = self.path_for(acc)
+
+        # 清理指向同一账号的其他命名文件(如旧版 uid 命名)
+        for p in sorted(self.root.glob("*.json")):
+            if p == target:
+                continue
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                continue
+            same = (
+                str(data.get("uid")) == str(acc.uid)
+                or (acc.phone and str(data.get("phone")) == str(acc.phone))
+            )
+            if same:
+                p.unlink(missing_ok=True)
+
+        _atomic_write_json(target, acc.to_dict())
+        return target
+
+    def load(self, key: str) -> Account:
+        """按手机号或 uid 读取档案。
 
         Raises:
             FileNotFoundError: 档案不存在。
         """
-        p = self.path_for(uid)
-        if not p.exists():
-            raise FileNotFoundError(f"找不到账号档案: {uid}")
+        p = self.find_file(key)
+        if p is None:
+            raise FileNotFoundError(f"找不到账号档案: {key}")
         return Account.from_dict(json.loads(p.read_text(encoding="utf-8")))
 
-    def delete(self, uid: str) -> bool:
+    def delete(self, key: str) -> bool:
         """删除档案,返回是否真的删了。"""
-        p = self.path_for(uid)
-        if p.exists():
+        p = self.find_file(key)
+        if p is not None and p.exists():
             p.unlink()
             return True
         return False
