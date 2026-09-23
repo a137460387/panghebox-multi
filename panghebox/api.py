@@ -30,6 +30,7 @@ DEFAULT_BASE_URL = "https://h5-proxy.panghebox.com"
 EP_WHOISIP = "/v1/nika/client/whoisip"
 EP_LOGIN = "/v1/nika/client/login"
 EP_GET_USER_INFO = "/v1/nika/client/getuserinfo"
+EP_CHECK_LOGIN = "/v1/nika/client/checklogin"
 EP_ZONELIST = "/v1/nika/client/zonelist"
 EP_GET_CHECKIN_LIST = "/v1/nika/client/getcheckinlist"
 EP_CHECKIN_PRIZE = "/v1/nika/client/checkinprize"
@@ -239,6 +240,26 @@ class PangHeClient:
             raw_log.append((EP_GET_USER_INFO, body))
         return UserInfo.from_login_body(body)
 
+    def check_login(self, *, raw_log: list | None = None) -> UserInfo:
+        """用 accessKey+uid 换取新 token(即客户端启动时的"自动登录")。
+
+        实测确认(2026-09-24):
+        * 只需要 body 里的 ``access_key`` + ``uid``,**无需短信验证码**;
+        * Authorization 头里带**过期** token 也能正常刷新;
+        * 响应即登录响应的形状:``uid / phone / is_real_name / token /
+          is_login / coin / duration`` —— 一并带回剩余时长(分钟)与盒币。
+
+        服务端 token 存在约 10 小时量级的有效期,档案里的 token 会过期;
+        本接口是档案"自愈"的基础:任何账号只要有 accessKey 就能随时续签。
+
+        另注:HTTP 层的 ``getuserinfo`` 长期返回 500(服务端问题),
+        查询账号信息应优先使用本接口。
+        """
+        body = self.request(EP_CHECK_LOGIN)
+        if raw_log is not None:
+            raw_log.append((EP_CHECK_LOGIN, body))
+        return UserInfo.from_login_body(body)
+
     def get_checkin_list(self, *, raw_log: list | None = None) -> dict[str, Any]:
         """取签到 7 天列表。返回原始 body,由 signin 模块解析。"""
         body = self.request(EP_GET_CHECKIN_LIST)
@@ -325,10 +346,20 @@ def credentials_from_prefs(prefs: dict[str, Any]) -> ApiCredentials:
     )
 
 
-def credentials_from_account(acc: Any, *, version: str = DEFAULT_VERSION) -> ApiCredentials:
+def credentials_from_account(
+    acc: Any,
+    *,
+    version: str = DEFAULT_VERSION,
+    token: str | None = None,
+) -> ApiCredentials:
     """从 Account 档案构造 API 凭据。
 
-    access_key / machine_id 优先从档案的 device 快照取,回退到 account 快照。
+    Args:
+        acc: 账号档案。
+        version: 客户端版本号。
+        token: 显式指定 Authorization 用的 token。传空串表示不带 token
+            ——``check_login`` 刷新时应当传 ``""``:实测过期 token 能通过,
+            但格式损坏的 token 会被服务端拒绝,空头则永远安全。
     """
     acc_data = getattr(acc, "account", {}) or {}
     dev_data = getattr(acc, "device", {}) or {}
@@ -338,7 +369,12 @@ def credentials_from_account(acc: Any, *, version: str = DEFAULT_VERSION) -> Api
         or dev_data.get("_access_key")
         or ""
     )
-    machine_id = dev_data.get("flutter.machine_id", "")
+    # machine_id 自 v0.1 起随账号走,存在 account 段;旧档案在 device 段,做兼容回退
+    machine_id = (
+        acc_data.get("flutter.machine_id")
+        or dev_data.get("flutter.machine_id")
+        or ""
+    )
 
     if not access_key:
         raise ValueError(f"账号 {getattr(acc, 'label', acc)} 档案里没有 access_key")
@@ -347,7 +383,7 @@ def credentials_from_account(acc: Any, *, version: str = DEFAULT_VERSION) -> Api
 
     return ApiCredentials(
         uid=str(getattr(acc, "uid", "")),
-        token=str(getattr(acc, "token", "")),
+        token=str(getattr(acc, "token", "")) if token is None else token,
         access_key=str(access_key),
         machine_id=str(machine_id),
         version=version,

@@ -131,6 +131,21 @@ machine_id 就会重置引导状态。让每个账号持有自己的 machine_id,
 `lastFlowZone` / `lastFlowZoneName` 是「上次选的区」。不跟着账号切换的话,
 切完号还停在上一个账号的区。
 
+## token 有效期与自动续签
+
+实测服务端 token 的有效期在 **10 小时量级**(无 `exp` 字段,过期由服务端判定,
+表现为人报业务码 `3584316`/`3584901` 之一的"token 失效")。
+
+好消息:客户端的"自动登录"就是 `POST /v1/nika/client/checklogin`,
+body 只要 `access_key + uid` 两项——**无需短信验证码**,且 Authorization
+头里带过期 token 也能通过。响应即登录响应的形状(`uid / phone / token /
+coin / duration`),一并带回剩余时长与盒币。
+
+本工具的 `refresh` 命令、`signin` 与 `switch` 的预刷新都走这条路径:
+**只要档案里有 accessKey,token 永远可以免短信续签**,过期不会让账号档案报废。
+注意刷新时 Authorization 头必须传空——实测过期 token 能通过,但格式损坏的
+token 会被拒;空头对两种情况都安全。
+
 ## 签到接口的实测 schema
 
 字段名已通过实测确认(非猜测)。`getcheckinlist` 无参数,返回:

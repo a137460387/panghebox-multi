@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 from typing import Sequence
 
@@ -83,9 +84,14 @@ def _make_context(args: argparse.Namespace) -> AppContext:
     return AppContext.discover(args.install_dir)
 
 
-def _client_for(acc: Account, *, version: str | None = None) -> PangHeClient:
+def _client_for(
+    acc: Account,
+    *,
+    version: str | None = None,
+    token: str | None = None,
+) -> PangHeClient:
     cred: ApiCredentials = credentials_from_account(
-        acc, version=version or read_registry_version() or "1.10.8"
+        acc, version=version or read_registry_version() or "1.10.8", token=token
     )
     return PangHeClient(cred)
 
@@ -238,6 +244,11 @@ def cmd_switch(args: argparse.Namespace) -> int:
         _warn(f"账号文件仍被占用: {ctx.prefs}")
         _warn("继续尝试写入,若失败请手动关闭残留进程。")
 
+    # 2.5) 预刷新目标账号的 token(免短信续签)。
+    # 失败也不阻塞:客户端启动时的自动登录会自行续签,这里只是为了
+    # 让写进去的 token 立即可用(便于工具自身的验证调用)。
+    _refresh_one(target, store, quiet=True)
+
     # 3) 写入
     try:
         merged = switch_account_on_disk(ctx.prefs, target, backup=not args.no_backup)
@@ -311,7 +322,7 @@ def cmd_signin(args: argparse.Namespace) -> int:
     failures = 0
     for acc in targets:
         _hr(f"签到 {acc.label} (ID {acc.uid})")
-        rc = _signin_one(acc, dump_raw=args.dump_raw, force=args.force)
+        rc = _signin_one(acc, store, dump_raw=args.dump_raw, force=args.force)
         if rc != 0:
             failures += 1
 
@@ -321,26 +332,32 @@ def cmd_signin(args: argparse.Namespace) -> int:
     return 1 if failures else 0
 
 
-def _signin_one(acc: Account, *, dump_raw: bool = False, force: bool = False) -> int:
+def _signin_one(acc: Account, store: AccountStore, *, dump_raw: bool = False, force: bool = False) -> int:
     raw_log: list = []
+    result = None
+
+    # 签到前先续签 token(空 token 头,对过期/损坏的档案都安全,失败不阻塞)。
+    # 服务端 token 有效期约 10 小时,预刷新保证签到用的永远是活 token。
+    _refresh_one(acc, store, quiet=True)
+
     try:
         client = _client_for(acc)
     except ValueError as e:
         _err(str(e))
         return 1
 
-    with client:
-        try:
+    try:
+        with client:
             state = get_state(client, raw_log=raw_log)
             if state.parsed:
                 print("  签到进度: " + state.summary())
                 print(state.table())
             result = check_in_account(client, force=force, raw_log=raw_log)
-        except ApiError as e:
-            _err(f"接口调用失败: {e}")
-            if dump_raw:
-                _dump(raw_log)
-            return 1
+    except ApiError as e:
+        _err(f"接口调用失败: {e}")
+        if dump_raw:
+            _dump(raw_log)
+        return 1
 
     print()
     if result.ok:
@@ -390,28 +407,43 @@ def cmd_refresh(args: argparse.Namespace) -> int:
     return 0
 
 
-def _refresh_one(acc: Account, store: AccountStore) -> None:
-    """查一次账号信息并回写档案。"""
-    print(f"  查询 {acc.label} …")
+def _refresh_one(acc: Account, store: AccountStore, *, quiet: bool = False) -> bool:
+    """checklogin 刷新 token,并回写档案(token/手机号/时长/盒币)。
+
+    返回是否成功。HTTP 层的 getuserinfo 长期 500,这里统一走 checklogin
+    ——它既续签 token,又一并带回时长与盒币。
+    """
+    if not quiet:
+        print(f"  刷新 {acc.label} …")
     try:
         client = _client_for(acc)
     except ValueError as e:
-        _err(str(e))
-        return
-    with client:
-        try:
-            info = client.get_user_info()
-        except ApiError as e:
-            _err(f"查询失败: {e}")
-            return
+        if not quiet:
+            _err(str(e))
+        return False
+    try:
+        # 刷新一律用空 Authorization 头:实测过期 token 可通过,但格式
+        # 损坏的 token 会被拒;空头对两种情况都安全。
+        with _client_for(acc, token="") as client:
+            info = client.check_login()
+    except ApiError as e:
+        if not quiet:
+            _err(f"刷新失败: {e}")
+        return False
 
-    acc.duration_minutes = info.duration_minutes
-    acc.coin = info.coin
-    acc.last_checked = __import__("time").time()
+    if info.token:
+        acc.token = info.token
+        acc.account["flutter.token"] = info.token
     if info.phone:
         acc.phone = info.phone
+        acc.account["flutter.userphone"] = info.phone
+    acc.duration_minutes = info.duration_minutes
+    acc.coin = info.coin
+    acc.last_checked = time.time()
     store.save(acc)
-    _ok(f"{acc.label}: 剩余 {info.duration_text()}, 盒币 {info.coin_text()}")
+    if not quiet:
+        _ok(f"{acc.label}: 剩余 {info.duration_text()}, 盒币 {info.coin_text()}, token 已续签")
+    return True
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -499,7 +531,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--dump-raw", action="store_true", help="打印原始响应(用于校准字段名)")
     sp.set_defaults(func=cmd_signin)
 
-    sp = sub.add_parser("refresh", help="刷新账号信息(时长/盒币)")
+    sp = sub.add_parser("refresh", help="续签 token 并刷新账号信息(时长/盒币)")
     sp.add_argument("account", nargs="?", help="手机号或 uid")
     sp.add_argument("--all", action="store_true", help="刷新全部")
     sp.set_defaults(func=cmd_refresh)
