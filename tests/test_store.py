@@ -71,12 +71,15 @@ def test_account_snapshot_only_takes_account_keys():
     snap = account_snapshot(fake_prefs())
     assert set(snap) <= set(ACCOUNT_KEYS)
     assert snap["flutter.uid"] == "100001"
-    assert "flutter.machine_id" not in snap
+    # machine_id 随账号走(见 ACCOUNT_KEYS 注释),因此包含在快照里
+    assert snap["flutter.machine_id"] == DEVICE_MACHINE_ID
 
 
 def test_device_snapshot_takes_device_keys():
+    """设备级快照只含渠道/归因,machine_id 已归入账号级。"""
     snap = device_snapshot(fake_prefs())
-    assert snap["flutter.machine_id"] == DEVICE_MACHINE_ID
+    assert snap["flutter.setup_channel"] == "bing-pc"
+    assert "flutter.machine_id" not in snap
     assert set(snap) <= set(DEVICE_KEYS)
 
 
@@ -94,13 +97,26 @@ def test_merge_switches_account_fields():
     assert merged["flutter.token"] == "FAKE.JWT.FOR.200002"
 
 
-def test_merge_never_touches_device_identity():
-    """machine_id / 渠道 / ocpc 必须原样保留——这是最关键的不变式。"""
+def test_merge_switches_machine_id_with_account():
+    """machine_id 随账号切换(每号一个独立设备身份)。
+
+    实测确认 machine_id 不参与鉴权,但它与客户端本地引导进度绑定,
+    因此让每个账号持有自己的值,引导状态互不干扰。
+    """
+    cur = fake_prefs("100001")
+    other = fake_prefs("200002")
+    other["flutter.machine_id"] = "99999999-8888-7777-6666-555555555555"
+
+    merged = merge_account_into_prefs(cur, account_snapshot(other))
+    assert merged["flutter.machine_id"] == "99999999-8888-7777-6666-555555555555"
+
+
+def test_merge_never_touches_channel_identity():
+    """渠道 / ocpc 是安装包决定的,切换账号不该改动它们。"""
     cur = fake_prefs("100001")
     target = account_snapshot(fake_prefs("200002"))
     merged = merge_account_into_prefs(cur, target)
 
-    assert merged["flutter.machine_id"] == DEVICE_MACHINE_ID
     assert merged["flutter.setup_channel"] == "bing-pc"
     assert merged["flutter.ocpc"] == cur["flutter.ocpc"]
 
@@ -138,26 +154,26 @@ def test_merge_carries_zone_with_account():
 
 
 def test_merge_fills_missing_device_key_from_archive():
-    """当前 prefs 缺设备键时,才允许用档案兜底补齐。"""
+    """当前 prefs 缺渠道键时,才允许用档案兜底补齐。"""
     cur = fake_prefs("100001")
-    del cur["flutter.machine_id"]
+    del cur["flutter.setup_channel"]
     merged = merge_account_into_prefs(
         cur,
         account_snapshot(fake_prefs("200002")),
-        device={"flutter.machine_id": "from-archive"},
+        device={"flutter.setup_channel": "from-archive"},
     )
-    assert merged["flutter.machine_id"] == "from-archive"
+    assert merged["flutter.setup_channel"] == "from-archive"
 
 
 def test_merge_does_not_overwrite_present_device_key():
-    """当前 prefs 有设备键时,档案里的值不能覆盖它。"""
+    """当前 prefs 有渠道键时,档案里的值不能覆盖它。"""
     cur = fake_prefs("100001")
     merged = merge_account_into_prefs(
         cur,
         account_snapshot(fake_prefs("200002")),
-        device={"flutter.machine_id": "should-not-win"},
+        device={"flutter.setup_channel": "should-not-win"},
     )
-    assert merged["flutter.machine_id"] == DEVICE_MACHINE_ID
+    assert merged["flutter.setup_channel"] == "bing-pc"
 
 
 def test_merge_does_not_mutate_inputs():
@@ -182,7 +198,7 @@ def test_account_from_prefs_roundtrip(tmp_path: Path):
     assert loaded.phone == "13700000003"
     assert loaded.note == "小号"
     assert loaded.account["flutter.token"] == "FAKE.JWT.FOR.300003"
-    assert loaded.device["flutter.machine_id"] == DEVICE_MACHINE_ID
+    assert loaded.account["flutter.machine_id"] == DEVICE_MACHINE_ID
 
 
 def test_account_from_prefs_rejects_logged_out():
@@ -270,9 +286,10 @@ def test_switch_account_on_disk(prefs_file: Path):
     assert on_disk == merged
     assert on_disk["flutter.uid"] == "400004"
     assert on_disk["flutter.userphone"] == "13600000004"
-    # 设备身份不能变
-    assert on_disk["flutter.machine_id"] == DEVICE_MACHINE_ID
+    # 渠道身份不能变
     assert on_disk["flutter.setup_channel"] == "bing-pc"
+    # machine_id 随账号走
+    assert on_disk["flutter.machine_id"] == DEVICE_MACHINE_ID
     # 备份存在
     assert prefs_file.with_suffix(".json.bak").exists()
 

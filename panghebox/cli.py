@@ -248,7 +248,8 @@ def cmd_switch(args: argparse.Namespace) -> int:
     _ok("账号数据已写入")
     if not args.no_backup:
         _ok(f"原文件已备份为 {ctx.prefs.name}.bak")
-    _ok(f"保留设备信息 machine_id={merged.get('flutter.machine_id')}")
+    _ok(f"设备标识 machine_id={merged.get('flutter.machine_id')}(随账号走)")
+    _ok(f"渠道标识 setup_channel={merged.get('flutter.setup_channel')}(保持不变)")
 
     # 4) 启动
     if not args.no_launch:

@@ -135,19 +135,27 @@ def test_signed_today_false_when_nothing_signed():
 
 def test_signed_today_uses_last_signed_entry():
     """签了 3 天但最后一次是昨天 → 今天还没签。"""
-    body = real_shape_body(signed_days=3, today="2026-09-22")
+    body = real_shape_body(signed_days=3, today="2020-01-01")
     st = parse_checkin_list(body)
     assert st.signed_today("2026-09-23") is False
 
 
 def test_can_checkin_false_when_signed_today():
-    st = parse_checkin_list(real_shape_body(signed_days=1))
-    assert st.signed_today("2026-09-23") is True
+    """用「真实今天」构造已签数据,验证 can_checkin 会返回 False。
+
+    can_checkin 内部按本机当天判断,所以这里不能写死日期,否则测试
+    会在跨天后失败。
+    """
+    from datetime import date
+
+    today = date.today().isoformat()
+    st = parse_checkin_list(real_shape_body(signed_days=1, today=today))
+    assert st.signed_today(today) is True
     assert st.can_checkin is False
 
 
 def test_can_checkin_true_when_not_signed_today():
-    st = parse_checkin_list(real_shape_body(signed_days=1, today="2026-09-22"))
+    st = parse_checkin_list(real_shape_body(signed_days=1, today="2020-01-01"))
     assert st.can_checkin is True
 
 
@@ -169,11 +177,14 @@ def test_next_day_is_first_unsigned():
 # ---------------------------------------------------------------------------
 
 def test_summary_mentions_today_state():
-    signed = parse_checkin_list(real_shape_body(signed_days=1))
+    from datetime import date
+
+    today = date.today().isoformat()
+    signed = parse_checkin_list(real_shape_body(signed_days=1, today=today))
     assert "今天已签" in signed.summary()
     assert "1/7" in signed.summary()
 
-    not_signed = parse_checkin_list(real_shape_body(signed_days=1, today="2026-09-22"))
+    not_signed = parse_checkin_list(real_shape_body(signed_days=1, today="2020-01-01"))
     assert "今天未签" in not_signed.summary()
 
 
@@ -215,7 +226,7 @@ class _FakeClient:
 
 def test_check_in_uses_prize_id_of_next_day():
     """必须用目标那天的 prize_id,而不是固定值。"""
-    st = parse_checkin_list(real_shape_body(signed_days=2, today="2026-09-22"))
+    st = parse_checkin_list(real_shape_body(signed_days=2, today="2020-01-01"))
     client = _FakeClient(response={"sale_value": 10})
     result = check_in(client, state=st)  # type: ignore[arg-type]
 
@@ -225,7 +236,9 @@ def test_check_in_uses_prize_id_of_next_day():
 
 
 def test_check_in_skips_when_signed_today():
-    st = parse_checkin_list(real_shape_body(signed_days=1))
+    from datetime import date
+
+    st = parse_checkin_list(real_shape_body(signed_days=1, today=date.today().isoformat()))
     client = _FakeClient()
     result = check_in(client, state=st)  # type: ignore[arg-type]
 
@@ -245,7 +258,7 @@ def test_check_in_force_bypasses_today_guard():
 
 def test_check_in_handles_already_done_code():
     """服务端返回 3584316 时要识别为「已领取」而不是普通失败。"""
-    st = parse_checkin_list(real_shape_body(signed_days=2, today="2026-09-22"))
+    st = parse_checkin_list(real_shape_body(signed_days=2, today="2020-01-01"))
     client = _FakeClient(
         error=ApiError("该日时间无法领取奖励", code=CODE_ALREADY_DONE)
     )
@@ -256,7 +269,7 @@ def test_check_in_handles_already_done_code():
 
 
 def test_check_in_reports_other_errors():
-    st = parse_checkin_list(real_shape_body(signed_days=2, today="2026-09-22"))
+    st = parse_checkin_list(real_shape_body(signed_days=2, today="2020-01-01"))
     client = _FakeClient(error=ApiError("boom", code=12345))
     result = check_in(client, state=st)  # type: ignore[arg-type]
     assert result.ok is False
@@ -300,7 +313,9 @@ class _StatefulClient:
 
 
 def test_check_in_account_skips_when_signed_today():
-    client = _StatefulClient(real_shape_body(signed_days=1))
+    from datetime import date
+
+    client = _StatefulClient(real_shape_body(signed_days=1, today=date.today().isoformat()))
     result = check_in_account(client)  # type: ignore[arg-type]
     assert result.ok is False
     assert result.already_done is True
@@ -308,7 +323,7 @@ def test_check_in_account_skips_when_signed_today():
 
 
 def test_check_in_account_signs_when_not_signed_today():
-    client = _StatefulClient(real_shape_body(signed_days=1, today="2026-09-22"))
+    client = _StatefulClient(real_shape_body(signed_days=1, today="2020-01-01"))
     result = check_in_account(client)  # type: ignore[arg-type]
     assert result.ok is True
     assert client.calls == [101]  # 第二天

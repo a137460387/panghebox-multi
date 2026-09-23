@@ -27,8 +27,15 @@ $ panghebox list
    `Version`、`Machineid`、`Accesskey`、`Platform`、`X-Client-Request-Id`),
    没有 HMAC / nonce / timestamp。因此不需要改动或注入客户端进程,普通
    HTTP 请求即可完成签到。
-2. **`accessKey` 和 `machine_id` 是设备级凭证,同一台机器上所有账号共用。**
-   所以「切换账号」只换 `uid` / `token` / `phone`,**绝不能**覆盖设备字段。
+2. **切换的本质是换 `token`。** 实测确认(逐项验证过):
+   - `token` 是唯一身份凭据。JWT payload 内嵌 `acceessKey`,服务端比对它与
+     请求头 `Accesskey` 是否一致——不一致直接报 `3584901`。所以 accessKey
+     **不能伪造,也不能按账号分别存**,同机多号共用同一个。
+   - `uid` 只是请求参数,**不参与鉴权**。传错 uid 但配上有效 token,
+     服务端仍按 token 识别身份。
+   - `machine_id` 只作请求头上报,**同样不参与鉴权**(换成随机 UUID 也能
+     正常调用)。但它与客户端本地引导进度绑定,所以**随账号走**——每个号
+     持有自己的值,引导状态互不干扰。
 3. **剩余时长与盒币来自登录响应的 `duration`(分钟)和 `coin` 字段。**
 
 ## 安装
@@ -111,6 +118,14 @@ Flutter 的 `SharedPreferences` 在内存里持有完整状态,**退出时会整
 **为什么写入要原子?**
 `shared_preferences.json` 一旦写坏,Flutter 启动时解析失败可能直接丢登录态。
 本工具用「同目录临时文件 → fsync → `os.replace`」,并默认先备份一份 `.bak`。
+
+**为什么 machine_id 跟着账号走?**
+
+实测它不参与鉴权,但它和客户端本地引导进度绑定:客户端日志里能看到
+`reset cloud_game to 0 (localDevice: , currentDevice: <新UUID>)` —— 换了
+machine_id 就会重置引导状态。让每个账号持有自己的 machine_id,各号在
+客户端看来是不同设备,引导进度互不影响;渠道标识(`setup_channel`)和
+归因标识(`ocpc`)由安装包决定,切换账号时保持不变。
 
 **选区为什么跟着账号走?**
 `lastFlowZone` / `lastFlowZoneName` 是「上次选的区」。不跟着账号切换的话,

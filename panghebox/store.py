@@ -6,8 +6,15 @@
    (guide_device_* 引导进度 30 个、qualitys 画质、setup_channel 渠道、
    ocpc 广告归因)。整文件覆盖会把当前设备的这些状态一起带过去。
 
-2. **machine_id / accessKey 是设备级凭证,跨账号共享,绝不覆盖。**
-   实测同一台机器上多个账号用的是同一个 accessKey。
+2. **切换的本质是换 token。** 实测确认(2026-09-24):
+   - ``token`` 是唯一身份凭据。JWT payload 里嵌了 ``acceessKey``,
+     服务端会比对它与请求头 ``Accesskey`` 是否一致;两者不符直接报
+     3584901,所以 accessKey **不能伪造、也不能按账号分别存**。
+   - ``uid`` 只是请求参数,**不参与鉴权**。传错 uid 配上有效 token,
+     服务端仍按 token 识别身份。
+   - ``machine_id`` 只作请求头上报,同样不参与鉴权;换任意 UUID 都能
+     正常调用。它与客户端本地引导进度绑定,因此**随账号走**(见 ACCOUNT_KEYS)
+     ——各号表现为独立设备,引导状态互不干扰。
 
 3. **选区键随账号一起存。** lastFlowZone / lastFlowZoneName 是「上次选的区」,
    不跟着账号走的话,切完号还停在上一个账号的区。
@@ -32,6 +39,15 @@ from typing import Any
 # ---------------------------------------------------------------------------
 
 # 跟随账号走的键:切换时用目标账号的值覆盖当前 prefs
+#
+# 注意 machine_id 也在其中。实测结论(2026-09-24):
+#   * machine_id 只作为请求头 Machineid 上报,**不参与鉴权**——换任意
+#     UUID(包括随机值)都能正常调用接口。
+#   * 真正决定身份的是 token(JWT 里嵌了 accessKey,服务端比对两者)。
+#   * 客户端把 machine_id 与本地引导进度绑定(日志里可见
+#     "reset cloud_game to 0 (localDevice: , currentDevice: <新UUID>)")。
+# 因此让每个账号持有自己的 machine_id:各号在客户端看来是不同设备,
+# 引导状态互不干扰,也不会因为共用同一个设备标识而被关联。
 ACCOUNT_KEYS: tuple[str, ...] = (
     "flutter.uid",
     "flutter.token",
@@ -40,14 +56,15 @@ ACCOUNT_KEYS: tuple[str, ...] = (
     "flutter.last_login_access_key",
     "flutter.personalDiskLoginSessionId",
     "flutter.new_user_ctivity",
+    "flutter.machine_id",
     # 选区随账号走,否则切完还停在上一个号的区
     "flutter.lastFlowZone",
     "flutter.lastFlowZoneName",
 )
 
-# 设备级键:跨账号共享,**永不覆盖**。缺失时(冷启动)才允许从档案补齐。
+# 设备级键:与登录账号无关、同机共享,切换时保留当前值(不随账号走)。
+# setup_channel / ocpc 是安装渠道与归因标识,由安装包决定,不该被账号切换改动。
 DEVICE_KEYS: tuple[str, ...] = (
-    "flutter.machine_id",
     "flutter.setup_channel",
     "flutter.ocpc",
 )
