@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "panghebox-multi"
+version = "0.1.0"
+description = "胖盒云电脑 多账号切换 + 自动签到命令行工具"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = ["requests>=2.31.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4.0"]
+
+[project.scripts]
+panghebox = "panghebox.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["panghebox*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
