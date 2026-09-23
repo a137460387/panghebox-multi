@@ -249,18 +249,30 @@ class PangHeClient:
     def checkin_prize(
         self,
         *,
-        area_tag_id: int | str | None = None,
+        prize_id: int | str,
         extra: dict[str, Any] | None = None,
         raw_log: list | None = None,
     ) -> dict[str, Any]:
-        """领取签到奖励。
+        """领取某一天的签到奖励。
 
-        ``area_tag_id`` 是从二进制常量池里确认存在的参数(与 checkinprize
-        相邻出现)。若服务端实际不需要,传 None 即可。
+        **``prize_id`` 是必需的**(实测:传了才有正常业务响应,不传直接 HTTP 500)。
+        它的值来自 ``getcheckinlist`` 响应里每天的 ``prize_id`` 字段。
+
+        注:二进制常量池里 ``checkinprize`` 旁还有个 ``area_tag_id``,但实测
+        传不传都不影响结果,故不再使用。
+
+        Args:
+            prize_id: 目标那天的奖励 ID。
+            extra: 额外的请求字段(一般不需要)。
+            raw_log: 收集原始响应。
+
+        Raises:
+            ValueError: prize_id 为空。
         """
-        payload: dict[str, Any] = {}
-        if area_tag_id is not None:
-            payload["area_tag_id"] = area_tag_id
+        if prize_id in (None, "", 0):
+            raise ValueError("checkinprize 需要 prize_id")
+
+        payload: dict[str, Any] = {"prize_id": prize_id}
         if extra:
             payload.update(extra)
         body = self.request(EP_CHECKIN_PRIZE, payload)

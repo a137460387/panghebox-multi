@@ -124,24 +124,32 @@ def test_request_injects_uid_and_access_key():
     assert body["scene_type"] == 1
 
 
-def test_checkin_prize_omits_area_tag_when_none():
-    c, sess = _client(_FakeResponse({"ret": {"code": 0}, "body": {"duration": 10}}))
-    c.checkin_prize(area_tag_id=None)
+def test_checkin_prize_sends_prize_id():
+    """prize_id 是实测确认必需的参数。"""
+    c, sess = _client(_FakeResponse({"ret": {"code": 0}, "body": {"sale_value": 10}}))
+    c.checkin_prize(prize_id=100)
+    assert sess.last["json"]["prize_id"] == 100
+
+
+def test_checkin_prize_rejects_missing_prize_id():
+    c, _ = _client(_FakeResponse({"ret": {"code": 0}, "body": {}}))
+    with pytest.raises(ValueError, match="prize_id"):
+        c.checkin_prize(prize_id=None)  # type: ignore[arg-type]
+
+
+def test_checkin_prize_does_not_send_area_tag_id():
+    """area_tag_id 经实测非必需,不应再发送。"""
+    c, sess = _client(_FakeResponse({"ret": {"code": 0}, "body": {}}))
+    c.checkin_prize(prize_id=100)
     assert "area_tag_id" not in sess.last["json"]
 
 
-def test_checkin_prize_includes_area_tag():
-    c, sess = _client(_FakeResponse({"ret": {"code": 0}, "body": {"duration": 10}}))
-    c.checkin_prize(area_tag_id=6310)
-    assert sess.last["json"]["area_tag_id"] == 6310
-
-
 def test_raw_log_collects_endpoint_and_body():
-    c, _ = _client(_FakeResponse({"ret": {"code": 0}, "body": {"duration": 10}}))
+    c, _ = _client(_FakeResponse({"ret": {"code": 0}, "body": {"sale_value": 10}}))
     log: list = []
-    c.checkin_prize(area_tag_id=1, raw_log=log)
+    c.checkin_prize(prize_id=100, raw_log=log)
     assert log and log[0][0].endswith("checkinprize")
-    assert log[0][1] == {"duration": 10}
+    assert log[0][1] == {"sale_value": 10}
 
 
 # ---------------------------------------------------------------------------

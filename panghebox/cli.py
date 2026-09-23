@@ -330,6 +330,10 @@ def _signin_one(acc: Account, *, dump_raw: bool = False, force: bool = False) ->
 
     with client:
         try:
+            state = get_state(client, raw_log=raw_log)
+            if state.parsed:
+                print("  签到进度: " + state.summary())
+                print(state.table())
             result = check_in_account(client, force=force, raw_log=raw_log)
         except ApiError as e:
             _err(f"接口调用失败: {e}")
@@ -337,8 +341,11 @@ def _signin_one(acc: Account, *, dump_raw: bool = False, force: bool = False) ->
                 _dump(raw_log)
             return 1
 
+    print()
     if result.ok:
         _ok(result.message)
+    elif result.already_done:
+        _warn(result.message)
     else:
         _warn(result.message)
 

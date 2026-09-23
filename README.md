@@ -55,7 +55,7 @@ python -m panghebox.cli switch 13900000002
 python -m panghebox.cli switch --next      # 按列表顺序循环切
 
 # 3) 签到
-python -m panghebox.cli signin             # 当前账号
+python -m panghebox.cli signin             # 当前账号(会打印 7 天进度)
 python -m panghebox.cli signin --all       # 所有已保存账号
 python -m panghebox.cli signin --dump-raw  # 打印原始响应(排障用)
 
@@ -111,14 +111,33 @@ Flutter 的 `SharedPreferences` 在内存里持有完整状态,**退出时会整
 `lastFlowZone` / `lastFlowZoneName` 是「上次选的区」。不跟着账号切换的话,
 切完号还停在上一个账号的区。
 
+## 签到接口的实测 schema
+
+字段名已通过实测确认(非猜测)。`getcheckinlist` 无参数,返回:
+
+```json
+{
+  "checkin_list": [
+    {"prize_id": 100, "prize_sec_id": 1, "prize_name": "第1天签到礼包",
+     "sale_info": [{"sale_name": "签到奖励-10分钟卡", "sale_type": 101,
+                    "sale_value": 10, "sale_period": 0}],
+     "date": "2026-09-23 17:19:21"}
+  ],
+  "checkin_count": 1,
+  "actvity_day_count": 1
+}
+```
+
+- `sale_value` 是奖励分钟数,`sale_type: 101` 表示时长卡
+- `date` 为空串 = 该天未领取
+- `checkinprize` 的请求参数**只有 `prize_id`**(对应目标那天的值);
+  不传会直接 HTTP 500。二进制里旁边的 `area_tag_id` 实测非必需。
+- 每天只能领一次,重复领返回业务码 `3584316`(该日时间无法领取奖励)。
+  因此判断「今天是否已签」看的是**最后一条领取记录的 `date` 是否等于今天**,
+  而不是 `checkin_count`。
+
 ## 已知限制
 
-- **签到接口的响应字段名未经实测校准。** 端点
-  (`getcheckinlist` / `checkinprize`) 是从客户端二进制里确认的,但 Dart
-  AOT 会压缩字段名,静态读不出 schema。本工具用**多候选键名容错解析**,
-  解析失败时会明确报错而不是静默给错结果。若你的环境解析失败,请用
-  `signin --dump-raw` 打印原始响应,按实际字段名调整
-  `panghebox/signin.py` 里的候选键名。
 - **只能管理「在这台机器上登录过」的账号。** 因为 `accessKey` 是设备级凭证,
   服务端按 `(accessKey, uid)` 判定身份;从未在此设备登录过的 uid 会被拒绝。
 - **无法离线续签 token。** JWT 是 HS256 签名,密钥在服务端。token 过期后
