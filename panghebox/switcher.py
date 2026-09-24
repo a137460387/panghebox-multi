@@ -206,10 +206,24 @@ def launch_app(exe: Path, *, args: list[str] | None = None) -> int:
             getattr(subprocess, "DETACHED_PROCESS", 0)
             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         )
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(exe.parent),
-        creationflags=creationflags,
-        close_fds=True,
-    )
-    return proc.pid
+    try:
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(exe.parent),
+            creationflags=creationflags,
+            close_fds=True,
+        )
+        return proc.pid
+    except OSError as e:
+        # WinError 740:exe 清单要求管理员提升。CreateProcess 拒绝启动,
+        # 改走 ShellExecute(资源管理器同款),由系统弹 UAC;拿不到 pid,返回 -1。
+        if getattr(e, "winerror", None) != 740 or not is_windows():
+            raise
+        import ctypes  # noqa: PLC0415
+
+        ret = ctypes.windll.shell32.ShellExecuteW(
+            None, None, str(exe), None, str(exe.parent), 1  # SW_SHOWNORMAL
+        )
+        if ret <= 32:
+            raise OSError(f"ShellExecute 启动失败,代码 {ret}") from e
+        return -1
