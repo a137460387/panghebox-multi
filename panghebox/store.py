@@ -415,6 +415,37 @@ def write_prefs(path: Path | str, data: dict[str, Any], *, backup: bool = True) 
     return bak
 
 
+def clear_login_state(
+    prefs_path: Path | str,
+    *,
+    backup: bool = True,
+) -> list[str]:
+    """删除账号相关键,回到「未登录」状态,等价新装后的首次启动。
+
+    **必须删键,不能置空。** 实测教训(2026-09-24):把 uid/lastFlowZone
+    这类整数字段写成 null,客户端启动时的 checkSharedPreferences 会抛
+    ``type 'Null' is not a subtype of type 'Object'``(单次会话 40+ 处),
+    首页初始化被打断、一直转圈,需要重启一次(客户端规范化坏值后)才恢复。
+    而键缺失是 Flutter prefs 的「新装」路径,客户端有完善处理。
+
+    删除的键 = ACCOUNT_KEYS(含 machine_id,由客户端重新生成独立标识)
+    + isAutoLogin。保留 setup_channel / ocpc(渠道归因,与账号无关)。
+
+    Args:
+        prefs_path: prefs 文件路径。
+        backup: 是否先备份。
+
+    Returns:
+        被删除的键名列表。
+    """
+    data = read_prefs(prefs_path)
+    removed = [k for k in (*ACCOUNT_KEYS, "flutter.isAutoLogin") if k in data]
+    for k in removed:
+        data.pop(k, None)
+    write_prefs(prefs_path, data, backup=backup)
+    return removed
+
+
 def switch_account_on_disk(
     prefs_path: Path | str,
     target: Account,

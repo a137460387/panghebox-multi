@@ -34,6 +34,7 @@ from .signin import check_in_account, get_state
 from .store import (
     Account,
     AccountStore,
+    clear_login_state,
     read_prefs,
     switch_account_on_disk,
 )
@@ -446,6 +447,39 @@ def _refresh_one(acc: Account, store: AccountStore, *, quiet: bool = False) -> b
     return True
 
 
+def cmd_clear(args: argparse.Namespace) -> int:
+    """清空客户端登录态,以便登录一个新账号。"""
+    ctx = _make_context(args)
+
+    # 必须先退出客户端,否则退出时会用内存状态回写覆盖
+    if switcher.any_running():
+        _ok("检测到客户端在运行,正在退出…")
+        if not switcher.kill_app():
+            _err("无法结束客户端进程,请手动关闭后重试。")
+            return 1
+        _ok("客户端已退出")
+
+    try:
+        removed = clear_login_state(ctx.prefs, backup=not args.no_backup)
+    except (FileNotFoundError, ValueError, OSError) as e:
+        _err(f"清理失败: {e}")
+        return 1
+
+    _ok(f"已删除 {len(removed)} 个登录相关键(等价新装首次启动)")
+    if not args.no_backup:
+        _ok(f"原文件已备份为 {ctx.prefs.name}.bak")
+    _ok("machine_id 已一并删除,下次登录客户端会生成全新设备标识")
+
+    if args.launch:
+        try:
+            pid = switcher.launch_app(ctx.exe)
+            _ok(f"客户端已启动 (pid {pid}),请在登录页登录新账号")
+        except (FileNotFoundError, OSError) as e:
+            _err(f"启动失败: {e}")
+            return 1
+    return 0
+
+
 def cmd_doctor(args: argparse.Namespace) -> int:
     _hr("环境自检")
 
@@ -537,6 +571,14 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_refresh)
 
     sub.add_parser("doctor", help="环境自检").set_defaults(func=cmd_doctor)
+
+    sp = sub.add_parser(
+        "clear",
+        help="清空客户端登录态(用于登录新账号;删键而非置空,不会导致客户端转圈)",
+    )
+    sp.add_argument("--launch", action="store_true", help="清理后自动启动客户端")
+    sp.add_argument("--no-backup", action="store_true", help="不备份原 prefs")
+    sp.set_defaults(func=cmd_clear)
 
     return p
 

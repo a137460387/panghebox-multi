@@ -68,6 +68,7 @@ python -m panghebox.cli signin --dump-raw  # 打印原始响应(排障用)
 
 # 其它
 python -m panghebox.cli current            # 当前登录的是谁
+python -m panghebox.cli clear --launch     # 清空登录态并启动客户端(用于登录新账号)
 python -m panghebox.cli refresh --all      # 刷新时长/盒币
 python -m panghebox.cli doctor             # 环境自检
 ```
@@ -126,6 +127,15 @@ Flutter 的 `SharedPreferences` 在内存里持有完整状态,**退出时会整
 machine_id 就会重置引导状态。让每个账号持有自己的 machine_id,各号在
 客户端看来是不同设备,引导进度互不影响;渠道标识(`setup_channel`)和
 归因标识(`ocpc`)由安装包决定,切换账号时保持不变。
+
+**清理登录态为什么是删键而不是置空?**
+
+实测教训:把 `flutter.uid`、`flutter.lastFlowZone` 这类整数字段写成
+null,客户端启动时的 `checkSharedPreferences` 会抛
+`type 'Null' is not a subtype of type 'Object'`(单次会话 40+ 处),
+首页初始化被打断、一直转圈,需要重启一次才能恢复。而**键缺失**是
+Flutter prefs 的「新装首次启动」路径,客户端处理完善。所以 `clear`
+命令删除账号键(含 machine_id,由客户端重新生成),绝不写入 null。
 
 **选区为什么跟着账号走?**
 `lastFlowZone` / `lastFlowZoneName` 是「上次选的区」。不跟着账号切换的话,

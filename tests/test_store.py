@@ -376,3 +376,52 @@ def test_delete_by_uid_removes_phone_named_file(tmp_path: Path):
     store.save(Account.from_prefs(fake_prefs("300003", "13700000003")))
     assert store.delete("300003") is True
     assert not list(store.root.glob("*.json"))
+
+# ---------------------------------------------------------------------------
+# clear_login_state:删键而非置空
+# ---------------------------------------------------------------------------
+
+def test_clear_login_state_deletes_keys(prefs_file: Path):
+    """账号键应被删除(而非置空)——置空 null 会让客户端类型校验崩溃。"""
+    from panghebox.store import clear_login_state
+
+    removed = clear_login_state(prefs_file)
+    on_disk = read_prefs(prefs_file)
+
+    for k in ("flutter.uid", "flutter.token", "flutter.userphone",
+              "flutter.machine_id", "flutter.isAutoLogin"):
+        assert k not in on_disk, f"{k} 应被删除"
+    assert "flutter.isAutoLogin" in removed
+    # 设备级/本地状态保留
+    assert on_disk["flutter.setup_channel"] == "bing-pc"
+    assert on_disk["flutter.qualitys"] == "20000000-1"
+    assert on_disk["flutter.speed_test_cooldown_by_uid"]
+
+
+def test_clear_login_state_creates_backup(prefs_file: Path):
+    from panghebox.store import clear_login_state
+
+    bak = clear_login_state(prefs_file, backup=True)
+    assert prefs_file.with_suffix(".json.bak").exists()
+    # 备份里仍保有账号字段
+    assert "flutter.uid" in json.loads(
+        prefs_file.with_suffix(".json.bak").read_text(encoding="utf-8")
+    )
+
+
+def test_clear_login_state_resulting_prefs_has_no_nulls(prefs_file: Path):
+    """清理后的 prefs 不应含任何 null 值(客户端对 null 敏感)。"""
+    from panghebox.store import clear_login_state
+
+    clear_login_state(prefs_file)
+    on_disk = read_prefs(prefs_file)
+    nulls = [k for k, v in on_disk.items() if v is None]
+    assert nulls == [], f"不应有 null 值: {nulls}"
+
+
+def test_clear_login_state_idempotent(prefs_file: Path):
+    from panghebox.store import clear_login_state
+
+    clear_login_state(prefs_file)
+    removed2 = clear_login_state(prefs_file, backup=False)
+    assert removed2 == []
