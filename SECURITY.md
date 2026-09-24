@@ -32,6 +32,19 @@ tryLogin ------> : {uid: ..., phone: 138xxxxxxxx, token: eyJ...}
 所以**排查问题时不要直接把日志贴到公开 issue 里**。如需提交日志,请先删除
 含 `Authorization` / `Accesskey` / `token` / `phone` 的行。
 
+### ⚠️ 账号档案 = 长期有效凭据
+
+实测 `checklogin` 接口只需 `access_key + uid`(档案里都有)即可免短信
+换发新 token。这意味着:
+
+* **`accounts/*.json` 的价值等同于账号的长期控制权**,而不仅仅是一次
+  登录会话。泄露一份档案,对方可无限续签 token,直到你在官方渠道
+  (改绑/换设备)使该设备的 accessKey 失效。
+* 请像对待密码管理器数据库一样对待 `accounts/` 目录:不要进网盘、不要
+  打包分享、不要提交到任何版本库(包括私有库)。
+* 若某份档案不再需要,删除文件并不能"注销"服务端侧的绑定;如担心泄露,
+  应在官方客户端里做退出登录/更换设备等操作使旧凭据失效。
+
 ## 分发与开源注意事项
 
 如果你要 fork 或分发本工具:
@@ -63,7 +76,10 @@ icacls "D:\code\Ai\panghebox-multi\accounts" /inheritance:r /grant:r "$env:USERN
 
 - 接口**没有请求签名**,认证仅靠 bearer JWT + 设备级 accessKey。这意味着
   拿到 token 即可在该设备上冒充登录,请像保护密码一样保护它。
-- token 是 HS256 签名,**无法离线伪造或延长**;过期后必须重新登录。
+- token 是 HS256 签名,无法离线伪造;有效期约 10 小时(服务端判定)。
+  **但**存在免短信续签通道 `POST /v1/nika/client/checklogin`
+  (body 只要 `access_key + uid`),即拿到档案就等于**长期持有账号访问权**,
+  直到该账号在别处被顶下线或密码/设备变更。
 - 本工具不绕过任何验证码、风控或付费限制。
 
 ## 报告问题

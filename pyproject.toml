@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "panghebox-multi"
-version = "0.1.0"
+version = "0.2.0"
 description = "胖盒云电脑 多账号切换 + 自动签到命令行工具"
 readme = "README.md"
 requires-python = ">=3.10"
